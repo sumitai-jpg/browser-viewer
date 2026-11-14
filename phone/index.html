@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TONARI 実機テスト</title>
+<style>
+  :root{--cream:#F9F6EF;--lav:#BAABC4;--ink:#141210;--card:#FEFDFC}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--cream);color:var(--ink);font-family:-apple-system,"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif;
+       padding:calc(14px + env(safe-area-inset-top)) 14px calc(20px + env(safe-area-inset-bottom))}
+  h1{font-size:17px;margin:0 0 2px;letter-spacing:.02em}
+  .sub{font-size:11px;color:#6b6459;margin:0 0 14px}
+  .bar{display:flex;gap:8px;margin-bottom:10px}
+  input{flex:1;min-width:0;border:1px solid #e2dcd0;background:var(--card);border-radius:12px;padding:12px;font-size:14px;color:var(--ink)}
+  button{border:0;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;background:var(--ink);color:#fff}
+  button:disabled{opacity:.35}
+  #stop{background:#fff;color:var(--ink);border:1px solid #ddd6c9}
+  .stage{background:var(--card);border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(20,18,16,.06);aspect-ratio:1024/700;
+         display:flex;align-items:center;justify-content:center;position:relative}
+  .stage img{width:100%;height:100%;object-fit:contain;display:block}
+  .stage .idle{font-size:12px;color:#9a927f;text-align:center;padding:20px;line-height:1.7}
+  .live{position:absolute;top:8px;left:8px;font-size:10px;letter-spacing:.12em;background:#fff;border-radius:6px;padding:3px 7px;color:#8a7f6d}
+  .live.on{background:var(--lav);color:#fff}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
+  .cell{background:var(--card);border-radius:10px;padding:8px 6px;text-align:center}
+  .cell b{display:block;font-size:15px;font-variant-numeric:tabular-nums}
+  .cell span{font-size:9px;color:#8a8175;letter-spacing:.04em}
+  .msg{margin-top:12px;font-size:12px;line-height:1.6;color:#5d564b;min-height:18px}
+  .msg.bad{color:#b4442f;font-weight:600}
+  .note{margin-top:16px;font-size:10px;color:#9a927f;line-height:1.7}
+</style>
+</head>
+<body>
+<h1>TONARI 実機テスト</h1>
+<p class="sub">AIのブラウザを、スマホで見る。操作権は渡しません。見えるだけ。</p>
+
+<div class="bar">
+  <input id="url" value="https://spiritt.ai" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url">
+  <button id="go">開始</button>
+</div>
+<div class="bar"><button id="stop" disabled>停止</button></div>
+
+<div class="stage">
+  <span class="live" id="live">LIVE</span>
+  <div class="idle" id="idle">「開始」を押すと、AIのブラウザが動き出します。<br>最大5分</div>
+  <img id="shot" alt="" style="display:none">
+</div>
+
+<div class="stats">
+  <div class="cell"><b id="t">0</b><span>経過 秒</span></div>
+  <div class="cell"><b id="f">0</b><span>受信 枚</span></div>
+  <div class="cell"><b id="kb">0</b><span>通信 KB</span></div>
+  <div class="cell"><b id="st">-</b><span>状態</span></div>
+</div>
+
+<div class="msg" id="msg"></div>
+<div class="note">※ 計測用の画面です。デザインはまだ当てていません。<br>※ 画面をロックすると止まるのがiOSの仕様です（そこも測っています）。</div>
+
+<script>
+(function(){
+  var API = "https://solene-0e598278.base44.app/functions/tonariPhone";
+  var img = document.getElementById('shot'), idle = document.getElementById('idle');
+  var elT = document.getElementById('t'), elF = document.getElementById('f'), elKb = document.getElementById('kb'),
+      elSt = document.getElementById('st'), msg = document.getElementById('msg'), live = document.getElementById('live');
+  var go = document.getElementById('go'), stop = document.getElementById('stop'), urlIn = document.getElementById('url');
+  var es = null, tick = null, t0 = 0, wake = null;
+
+  function set(step){ elSt.textContent = step; }
+  function fail(text){ msg.className = 'msg bad'; msg.textContent = text; set('切断'); live.className = 'live'; }
+
+  function start(){
+    var target = (urlIn.value || '').trim();
+    if(!target) return;
+    if(es) es.close();
+    msg.className = 'msg'; msg.textContent = 'ブラウザを起動しています…';
+    img.style.display = 'none'; idle.style.display = 'block'; idle.textContent = '起動待ち…';
+    elF.textContent = '0'; elKb.textContent = '0';
+    t0 = Date.now(); set('起動中');
+    clearInterval(tick);
+    tick = setInterval(function(){ elT.textContent = Math.round((Date.now()-t0)/1000); }, 500);
+    go.disabled = true; stop.disabled = false;
+
+    if(navigator.wakeLock && navigator.wakeLock.request){
+      navigator.wakeLock.request('screen').then(function(w){ wake = w; }).catch(function(){});
+    }
+
+    var q = API + '?seconds=300&fps=5&q=45&w=1024&url=' + encodeURIComponent(target);
+    es = new EventSource(q);
+    es.addEventListener('frame', function(e){
+      var d = JSON.parse(e.data);
+      img.src = 'data:image/jpeg;base64,' + d.jpeg;
+      img.style.display = 'block'; idle.style.display = 'none';
+      elF.textContent = d.n; live.className = 'live on'; set('LIVE');
+    });
+    es.addEventListener('status', function(e){
+      var d = JSON.parse(e.data);
+      if(d.kb != null) elKb.textContent = d.kb;
+      if(d.step === 'navigated'){ msg.className = 'msg'; msg.textContent = 'ページを開きました（' + d.w + 'x' + d.h + ' / ' + d.fps + 'fps）'; }
+      if(d.step === 'tick' && d.alive === false){ fail('AIのブラウザとの接続が切れました（' + d.t + '秒）'); }
+      if(d.step === 'ws-closed'){ fail('ブラウザとの接続が切れました（' + d.t + '秒）'); }
+    });
+    es.addEventListener('done', function(e){
+      var d = JSON.parse(e.data);
+      msg.className = 'msg'; msg.textContent = '5分間つながりました（' + d.sent + '枚 / ' + d.kb + 'KB）';
+      finish('完了');
+    });
+    es.onerror = function(e){
+      if(e && e.data){
+        var d = null; try{ d = JSON.parse(e.data); }catch(_){}
+        fail('エラー: ' + ((d && d.error) || '不明')); finish('エラー'); return;
+      }
+      fail('通信が切れました（' + Math.round((Date.now()-t0)/1000) + '秒時点）');
+      finish('切断');
+    };
+  }
+
+  function finish(step){
+    set(step); live.className = 'live';
+    if(es){ es.close(); es = null; }
+    clearInterval(tick); go.disabled = false; stop.disabled = true;
+    if(wake){ try{ wake.release(); }catch(_){} wake = null; }
+  }
+
+  go.addEventListener('click', start);
+  stop.addEventListener('click', function(){ msg.className='msg'; msg.textContent='止めました'; finish('停止'); });
+})();
+</script>
+</body>
+</html>
